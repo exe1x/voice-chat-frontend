@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sol Chatroom</title>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" type="image/png" href="micunmute.png">
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>Sol Chatroom</h1>
+      <p>Join the voice chat and send this to multimillions</p>
+      
+      <!-- Status display area -->
+      <div class="status-box">
+        <p id="status">Click "Join Chat" to connect.</p>
+      </div>
+
+      <!-- Join Chat and Mute buttons -->
+      <button onclick="joinChat()" id="joinButton">Join Chat</button>
+      <button onclick="toggleMicrophone()" id="muteButton" disabled>Mute</button>
+    </div>
+  </div>
+
+  <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+  <script src="client.js"></script>
+</body>
+</html>
