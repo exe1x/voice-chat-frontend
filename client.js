@@ -1,22 +1,31 @@
-// client.js
 const socket = io("https://voicechat-3069ffcc60b2.herokuapp.com");
 let localStream;
 let peerConnections = {};
-let isMuted = true;
 
-// Display elements
+// HTML elements
 const status = document.getElementById("status");
 const joinButton = document.getElementById("joinButton");
 const muteButton = document.getElementById("muteButton");
 
-// Function to get audio from the user's microphone
+let isMuted = true;
+
+// Get audio stream from the user's microphone
 async function getLocalStream() {
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    // Play the local audio stream to ensure the mic works
+    const localAudio = document.createElement("audio");
+    localAudio.srcObject = localStream;
+    localAudio.autoplay = true;
+    localAudio.muted = true; // Avoid feedback loop with your own mic
+    document.body.appendChild(localAudio);
+
     muteMicrophone(true); // Start with mic muted
     console.log("Local stream obtained.");
   } catch (err) {
     console.error("Error accessing microphone:", err);
+    status.textContent = "Microphone access denied.";
   }
 }
 
@@ -26,111 +35,100 @@ function toggleMicrophone() {
   muteMicrophone(isMuted);
 }
 
-// Helper to mute/unmute
+// Helper function to mute/unmute the microphone
 function muteMicrophone(mute) {
   if (localStream) {
     localStream.getTracks().forEach((track) => (track.enabled = !mute));
     muteButton.textContent = mute ? "Unmute" : "Mute";
-    status.textContent = mute ? "You are muted" : "You are live!";
+    status.textContent = mute ? "You are muted." : "You are live!";
   }
 }
 
-// Join the chat and initiate the local stream
+// Join chat and signal the server
 function joinChat() {
   getLocalStream().then(() => {
-    status.textContent = "Connected";
-    socket.emit("join", "Joining the voice chat");
+    status.textContent = "Connecting to voice chat...";
+    socket.emit("join");
 
-    // Enable the mute button
     muteButton.disabled = false;
     joinButton.disabled = true;
-    console.log("Joining the chat and signaling server.");
+  }).catch((err) => {
+    console.error("Failed to join chat:", err);
   });
 }
 
-// Handle WebSocket connection event (for signaling)
+// Handle new WebSocket connection
 socket.on("connect", () => {
   console.log("Connected to signaling server.");
+  status.textContent = "Connected to server.";
 });
 
-// Handle WebRTC signaling through Socket.io
+// Handle incoming signaling messages
 socket.on("signal", async ({ from, signal }) => {
-  console.log("Received signal from", from);
-
   if (!peerConnections[from]) {
-    console.log("Creating new RTCPeerConnection for", from);
-    const peerConnection = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }] // STUN server for NAT traversal
-    });
-    peerConnections[from] = peerConnection;
-
-    // Set up ICE candidate handling
-    peerConnection.onicecandidate = (event) => {
-      if (event.candidate) {
-        console.log("Sending ICE candidate to", from);
-        socket.emit("signal", { to: from, signal: event.candidate });
-      }
-    };
-
-    // Set up track handling to play remote audio
-    peerConnection.ontrack = (event) => {
-      console.log("Received remote track from", from);
-      const audio = document.createElement("audio");
-      audio.srcObject = event.streams[0];
-      audio.autoplay = true;
-      document.body.appendChild(audio);
-    };
-
-    // Add local tracks to the peer connection
-    localStream.getTracks().forEach((track) => peerConnection.addTrack(track, localStream));
-
-    // Create an offer for new peer connection
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-    console.log("Sending offer to", from);
-    socket.emit("signal", { to: from, signal: offer });
-
-    // Update status to "Connected!" after WebRTC setup
-    status.textContent = "Connected!";
+    await setupPeerConnection(from);
   }
 
-  // Handle received offer and respond with an answer
+  const peerConnection = peerConnections[from];
+
   if (signal.type === "offer") {
-    const peerConnection = peerConnections[from];
+    console.log("Handling offer from", from);
     await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
-    console.log("Sending answer to", from);
     socket.emit("signal", { to: from, signal: answer });
-
-    // Update status to "Connected!" after WebRTC setup
-    status.textContent = "Connected!";
-  }
-
-  // Handle received answer and finalize connection
-  else if (signal.type === "answer") {
-    const peerConnection = peerConnections[from];
+  } else if (signal.type === "answer") {
+    console.log("Handling answer from", from);
     await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
-    console.log("Received answer from", from);
-
-    // Update status to "Connected!" after WebRTC setup
-    status.textContent = "Connected!";
-  }
-
-  // Handle ICE candidate
-  else if (signal.candidate) {
-    const peerConnection = peerConnections[from];
+  } else if (signal.candidate) {
+    console.log("Adding ICE candidate from", from);
     await peerConnection.addIceCandidate(new RTCIceCandidate(signal));
-    console.log("Added ICE candidate from", from);
   }
 });
+
+// Setup a new RTCPeerConnection for a user
+async function setupPeerConnection(id) {
+  const peerConnection = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+  });
+
+  peerConnections[id] = peerConnection;
+
+  // Send ICE candidates to peers
+  peerConnection.onicecandidate = (event) => {
+    if (event.candidate) {
+      socket.emit("signal", { to: id, signal: event.candidate });
+    }
+  };
+
+  // Play the remote stream when received
+  peerConnection.ontrack = (event) => {
+    const remoteAudio = document.createElement("audio");
+    remoteAudio.srcObject = event.streams[0];
+    remoteAudio.autoplay = true;
+    document.body.appendChild(remoteAudio);
+  };
+
+  // Add local stream to the peer connection
+  if (localStream) {
+    localStream.getTracks().forEach((track) =>
+      peerConnection.addTrack(track, localStream)
+    );
+  } else {
+    console.error("Local stream not available.");
+  }
+
+  // Create an offer to connect with the peer
+  const offer = await peerConnection.createOffer();
+  await peerConnection.setLocalDescription(offer);
+  socket.emit("signal", { to: id, signal: offer });
+}
 
 // Handle user disconnection
 socket.on("user-disconnected", (id) => {
   if (peerConnections[id]) {
     peerConnections[id].close();
     delete peerConnections[id];
-    status.textContent = "A user has disconnected";
-    console.log("Disconnected from", id);
+    console.log(`User ${id} disconnected.`);
   }
 });
