@@ -16,6 +16,7 @@ let isMuted = true;
 async function getLocalStream() {
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    console.log("Microphone access granted. Local stream:", localStream);
 
     // Play the local audio stream to ensure the mic works
     const localAudio = document.createElement("audio");
@@ -36,6 +37,7 @@ async function getLocalStream() {
 function toggleMicrophone() {
   isMuted = !isMuted;
   muteMicrophone(isMuted);
+  console.log(isMuted ? "Microphone muted" : "Microphone unmuted");
 }
 
 // Helper function to mute/unmute the microphone
@@ -51,6 +53,7 @@ function muteMicrophone(mute) {
 function joinChat() {
   getLocalStream().then(() => {
     status.textContent = "Connecting to voice chat...";
+    console.log("Emitting join event to server");
     socket.emit("join");
 
     muteButton.disabled = false;
@@ -68,29 +71,35 @@ socket.on("connect", () => {
 
 // Handle incoming signaling messages
 socket.on("signal", async ({ from, signal }) => {
+  console.log(`Received signal from ${from}:`, signal);
+
   if (!peerConnections[from]) {
+    console.log("Setting up new peer connection for user:", from);
     await setupPeerConnection(from);
   }
 
   const peerConnection = peerConnections[from];
 
   if (signal.type === "offer") {
-    console.log("Handling offer from", from);
+    console.log("Received offer from", from);
     await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
     const answer = await peerConnection.createAnswer();
     await peerConnection.setLocalDescription(answer);
+    console.log("Sending answer to", from);
     socket.emit("signal", { to: from, signal: answer });
   } else if (signal.type === "answer") {
-    console.log("Handling answer from", from);
+    console.log("Received answer from", from);
     await peerConnection.setRemoteDescription(new RTCSessionDescription(signal));
   } else if (signal.candidate) {
-    console.log("Adding ICE candidate from", from);
+    console.log("Received ICE candidate from", from);
     await peerConnection.addIceCandidate(new RTCIceCandidate(signal));
+    console.log("Added ICE candidate for", from);
   }
 });
 
 // Setup a new RTCPeerConnection for a user
 async function setupPeerConnection(id) {
+  console.log("Creating RTCPeerConnection for", id);
   const peerConnection = new RTCPeerConnection({
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
   });
@@ -100,30 +109,37 @@ async function setupPeerConnection(id) {
   // Send ICE candidates to peers
   peerConnection.onicecandidate = (event) => {
     if (event.candidate) {
+      console.log("Sending ICE candidate to", id);
       socket.emit("signal", { to: id, signal: event.candidate });
+    } else {
+      console.log("All ICE candidates sent for", id);
     }
   };
 
   // Play the remote stream when received
   peerConnection.ontrack = (event) => {
+    console.log("Received remote track from", id);
     const remoteAudio = document.createElement("audio");
     remoteAudio.srcObject = event.streams[0];
     remoteAudio.autoplay = true;
     document.body.appendChild(remoteAudio);
+    console.log("Playing remote audio for", id);
   };
 
   // Add local stream to the peer connection
   if (localStream) {
-    localStream.getTracks().forEach((track) =>
-      peerConnection.addTrack(track, localStream)
-    );
+    localStream.getTracks().forEach((track) => {
+      peerConnection.addTrack(track, localStream);
+      console.log("Added local track to peer connection for", id);
+    });
   } else {
-    console.error("Local stream not available.");
+    console.error("Local stream not available when setting up peer connection.");
   }
 
   // Create an offer to connect with the peer
   const offer = await peerConnection.createOffer();
   await peerConnection.setLocalDescription(offer);
+  console.log("Sending offer to", id);
   socket.emit("signal", { to: id, signal: offer });
 }
 
