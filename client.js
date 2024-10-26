@@ -1,4 +1,7 @@
-const socket = io("https://voicechat-3069ffcc60b2.herokuapp.com");
+const socket = io("https://voicechat-3069ffcc60b2.herokuapp.com", {
+  transports: ["websocket"] // Enforce WebSocket-only transport
+});
+
 let localStream;
 let peerConnections = {};
 
